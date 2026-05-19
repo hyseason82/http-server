@@ -1,9 +1,9 @@
-obj-m += mydev.o
+obj-m += mydev.o mydev_platform.o mydev_irq_tasklet.o mydev_i2c.o
 
-KDIR := /home/hayes/wsl2-kernel
+KDIR := /lib/modules/$(shell uname -r)/build
 
 all:
-	make -C $(KDIR) M=$(PWD) KCONFIG_CONFIG=$(KDIR)/Microsoft/config-wsl modules
+	make -C $(KDIR) M=$(PWD) modules
 
 clean:
 	make -C $(KDIR) M=$(PWD) clean
