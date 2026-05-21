@@ -8,13 +8,14 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/epoll.h>
+#include <netinet/tcp.h>
 #include "threadpool.h"
 #include "../include/http_conn.h"
 
 #define PORT        8080
 #define MAX_EVENTS  1024
 #define MAX_FD      65536
-#define THREAD_NUM  4
+#define THREAD_NUM  8
 
 HttpConn conns[MAX_FD];
 int epoll_fd;
@@ -73,10 +74,11 @@ int main() {
     addr.sin_port        = htons(PORT);
     addr.sin_addr.s_addr = INADDR_ANY;
     bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr));
-    listen(listen_fd, 128);
+    listen(listen_fd, 65535);
 
     epoll_fd = epoll_create1(0);
     epoll_add(epoll_fd, listen_fd);
+    http_cache_init("resources");
     ThreadPool* pool = threadpool_create(THREAD_NUM);
 
     printf("Server started on port %d\n", PORT);
@@ -98,11 +100,17 @@ int main() {
                                          (struct sockaddr*)&client_addr,
                                          &client_len);
                     if (conn_fd < 0) break;  // EAGAIN：本轮连接已接完
+                    int nodelay = 1;
+                    setsockopt(conn_fd, IPPROTO_TCP, TCP_NODELAY,
+                               &nodelay, sizeof(nodelay));
                     http_conn_init(&conns[conn_fd], conn_fd);
                     epoll_add(epoll_fd, conn_fd);
                 }
 
-            } else if (events[i].events & EPOLLIN) {
+            } else {
+                // EPOLLIN, EPOLLERR, EPOLLHUP — all handled by handle_request
+                // MUST epoll_del first: ET won't re-fire until re-armed, prevents
+                // double-dispatch and stops EPOLLERR spin loop
                 epoll_del(epoll_fd, fd);
                 threadpool_add(pool, handle_request, &conns[fd]);
             }

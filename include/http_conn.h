@@ -26,6 +26,9 @@ struct HttpConn {
     HttpRequest request;
 };
 
+// 启动时调用一次，把静态文件缓存到内存
+void http_cache_init(const char* resource_dir);
+
 void http_conn_init(HttpConn* conn, int fd);
 int  http_conn_read(HttpConn* conn);       // 从fd读数据到buf
 int  http_conn_parse(HttpConn* conn);      // 解析buf里的HTTP请求
