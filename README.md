@@ -14,11 +14,7 @@
 
 | 测试工具 | 并发数 | keep-alive | QPS | 失败请求 | 环境 |
 |---|---|---|---|---|---|
-| ab | 100 | ✓ | 7000+ | 0 | Oracle Cloud VM，ab 打本机 loopback |
-| ab | 1000 | ✓ | 5500+ | 0 | 同上 |
-| ab (修复前) | 100 | ✗ | 265 | - | 腾讯云 2核2G |
-
-> 注：loopback 无网卡延迟，实际部署 QPS 会低；云主机 CPU steal time 约 70%
+| ab | 1000 | ✓ | 5500+ | 0 | Linux 6.17，loopback |
 
 ## 修复的关键 Bug
 
