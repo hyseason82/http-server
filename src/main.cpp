@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/epoll.h>
@@ -60,6 +61,8 @@ void handle_request(void* arg) {
 }
 
 int main() {
+    signal(SIGPIPE, SIG_IGN);  // 客户端断开时write不崩进程
+
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     int opt = 1;
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -87,18 +90,17 @@ int main() {
             int fd = events[i].data.fd;
 
             if (fd == listen_fd) {
-                struct sockaddr_in client_addr;
-                socklen_t client_len = sizeof(client_addr);
-                int conn_fd = accept(listen_fd,
-                                     (struct sockaddr*)&client_addr,
-                                     &client_len);
-                if (conn_fd < 0) continue;
-
-                printf("New connection: fd=%d from %s\n",
-                       conn_fd, inet_ntoa(client_addr.sin_addr));
-
-                http_conn_init(&conns[conn_fd], conn_fd);
-                epoll_add(epoll_fd, conn_fd);
+                // ET模式：循环accept直到EAGAIN，否则高并发下会丢连接
+                while (1) {
+                    struct sockaddr_in client_addr;
+                    socklen_t client_len = sizeof(client_addr);
+                    int conn_fd = accept(listen_fd,
+                                         (struct sockaddr*)&client_addr,
+                                         &client_len);
+                    if (conn_fd < 0) break;  // EAGAIN：本轮连接已接完
+                    http_conn_init(&conns[conn_fd], conn_fd);
+                    epoll_add(epoll_fd, conn_fd);
+                }
 
             } else if (events[i].events & EPOLLIN) {
                 epoll_del(epoll_fd, fd);

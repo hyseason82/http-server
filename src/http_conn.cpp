@@ -1,10 +1,13 @@
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include "../include/http_conn.h"
+
+#pragma GCC diagnostic ignored "-Wunused-result"
 
 void http_conn_init(HttpConn* conn, int fd) {
     conn->fd      = fd;
@@ -14,14 +17,24 @@ void http_conn_init(HttpConn* conn, int fd) {
     memset(conn->buf, 0, sizeof(conn->buf));
 }
 
-// 从fd读数据追加到buf
+// ET模式必须循环读到EAGAIN，否则缓冲区里残留数据不会再触发通知
 int http_conn_read(HttpConn* conn) {
-    int n = read(conn->fd,
-                 conn->buf + conn->buf_len,
-                 sizeof(conn->buf) - conn->buf_len);
-    if (n <= 0) return n;
-    conn->buf_len += n;
-    return n;
+    int total = 0;
+    while (1) {
+        int remain = sizeof(conn->buf) - conn->buf_len;
+        if (remain == 0) break;  // buf满了，先处理已有数据
+        int n = read(conn->fd, conn->buf + conn->buf_len, remain);
+        if (n > 0) {
+            conn->buf_len += n;
+            total += n;
+        } else if (n == 0) {
+            return total > 0 ? total : 0;   // 对端关闭
+        } else {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;  // 读干净了
+            return -1;
+        }
+    }
+    return total;
 }
 
 // 解析一行：找到\r\n返回行内容，没找到返回空
@@ -45,7 +58,7 @@ int http_conn_parse(HttpConn* conn) {
         if (line.empty()) return 0;
 
         char method[16], path[256], version[16];
-        sscanf(line.c_str(), "%s %s %s", method, path, version);
+        sscanf(line.c_str(), "%15s %255s %15s", method, path, version);
         conn->request.method  = method;
         conn->request.path    = path;
         conn->request.version = version;
@@ -93,7 +106,7 @@ int http_conn_respond(HttpConn* conn) {
             "HTTP/1.1 404 Not Found\r\n"
             "Content-Length: 9\r\n\r\n"
             "Not Found";
-        write(conn->fd, resp, strlen(resp));
+        (void)write(conn->fd, resp, strlen(resp));
         return 0;
     }
 
@@ -108,13 +121,17 @@ int http_conn_respond(HttpConn* conn) {
              "HTTP/1.1 200 OK\r\n"
              "Content-Length: %d\r\n\r\n",
              file_size);
-    write(conn->fd, header, strlen(header));
+    (void)write(conn->fd, header, strlen(header));
 
     // mmap映射文件内容，零拷贝发送
-    void* file_data = mmap(NULL, file_size,
-                           PROT_READ, MAP_PRIVATE, file_fd, 0);
-    write(conn->fd, file_data, file_size);
-    munmap(file_data, file_size);
+    if (file_size > 0) {
+        void* file_data = mmap(NULL, file_size,
+                               PROT_READ, MAP_PRIVATE, file_fd, 0);
+        if (file_data != MAP_FAILED) {
+            (void)write(conn->fd, file_data, file_size);
+            munmap(file_data, file_size);
+        }
+    }
     close(file_fd);
 
     return 1;
